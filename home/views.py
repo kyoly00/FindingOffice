@@ -13,11 +13,12 @@ from urllib import parse
 from urllib.request import urlopen, Request as URLRequest
 from urllib.parse import urlencode
 from urllib.error import HTTPError
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 
 import math
 from time import timezone
+import re
 
 import json
 import numpy as np
@@ -36,10 +37,7 @@ google_map_api_key = os.getenv('GOOGLE_MAP_API_KEY')
 def index(request):
     return ranking(request)
 
-def alone(request):
-    return render(request, 'reservation.html')
-
-def together(request):
+def reservation(request):
     return render(request, 'reservation.html')
 
 def login(request):
@@ -256,6 +254,13 @@ def address_to_lat_lng(addresses, people_counts):
     if len(people_counts) == 1: return latitude, longitude
     else: return all_latitude, all_longitude
 
+def is_valid_email(email):
+    if email is None:
+        return False
+    # 정규 표현식으로 이메일 형식 확인
+    email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+    return re.match(email_regex, email) is not None
+
 def together_location(request):
     addresses = []
     people_counts = []
@@ -271,10 +276,19 @@ def together_location(request):
             address = request.POST.get(address_key)
             people = request.POST.get(people_key)
 
+            if address and is_valid_email(address):
+                try:
+                    customer = Customer.objects.get(cus_email=address)
+                    address = customer.cus_address  # 이메일에 맞는 주소로 변경
+                except Customer.DoesNotExist:
+                    # 이메일에 맞는 고객이 없을 경우 처리
+                    return HttpResponse(f"No customer found with email: {address}", status=404)
+
             if address and people:
                 addresses.append(address)
                 people_counts.append(int(people))
                 people_num += int(people)
+                print(address, people_num)
             else:
                 break
 
@@ -301,7 +315,6 @@ def alone_location(request):
     try:
         # alone_location.html에서 주소와 인원수 받아와 리스트로 저장
         if request.method == 'POST':
-            print(request.POST)
             address_key = f'address1'
 
             address = request.POST.get(address_key)
@@ -326,13 +339,10 @@ def recommendation(request):
     if request.method == 'POST':
         selected_ids_str = request.POST.get('selected')
         selected_ids = int(selected_ids_str)
-        print(selected_ids)
         request.session['selected_office_ids'] = selected_ids  # 선택한 오피스 ID를 세션에 저장
         selected_offices = ShareOffice.objects.filter(id=selected_ids)
 
         selected_data = [(office.id, office.so_name, office.so_address) for office in selected_offices]
-
-        print(f"Selected office IDs: {selected_ids}")
 
         return render(request, 'enterinfo.html', {'selected_data': selected_data, 'form': ReservationForm()})
 

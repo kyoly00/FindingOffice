@@ -30,7 +30,7 @@
 										<div class="col-4 col-12-medium">
 											<section>
                                                 {% if request.session.cus_email %}
-                                                    <a href="{% url 'together' %}" class="image featured"><img src="{% static 'images/pic01.png' %}" alt="" /></a>
+                                                    <a href="{% url 'reservation' %}" class="image featured"><img src="{% static 'images/pic01.png' %}" alt="" /></a>
                                                 {% else %}
                                                     <a href="{% url 'login' %}" class="image featured"><img src="{% static 'images/pic01.png' %}" alt="" /></a>
                                                 {% endif %}
@@ -43,7 +43,7 @@
 										<div class="col-4 col-12-medium">
 											<section>
 												{% if request.session.cus_email %}
-                                                    <a href="{% url 'together' %}" class="image featured"><img src="{% static 'images/pic02.png' %}" alt="" /></a>
+                                                    <a href="{% url 'reservation' %}" class="image featured"><img src="{% static 'images/pic02.png' %}" alt="" /></a>
                                                 {% else %}
                                                     <a href="{% url 'login' %}" class="image featured"><img src="{% static 'images/pic02.png' %}" alt="" /></a>
                                                 {% endif %}

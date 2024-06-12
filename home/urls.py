@@ -4,10 +4,9 @@ from django.contrib.auth.views import LoginView
 
 urlpatterns = [
     path('', views.index, name='index'),
-    path('alone/', views.alone, name='alone'),
-    path('together/', views.together, name='together'),
     path('login/', views.login, name='login'),
     path('mypage/', views.my_page, name='mypage'),
+    path('reservation/', views.reservation, name='reservation'),
     path('together_location/', views.together_location, name='together_location'),
     path('update_customer/', views.update_customer, name='update_customer'),
     path('delete_customer/', views.delete_customer, name='delete_customer'),
