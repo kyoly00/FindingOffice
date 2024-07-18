@@ -68,7 +68,7 @@ document.getElementById("submit-card-info").addEventListener("click", function()
 
 document.getElementById("confirm-button").addEventListener("click", function() {
     // Redirect to another page
-    window.location.href= redirectUrl; // 여기에 이동할 URL을 입력하세요.
+    window.location.href= "{% url 'choose_func' %}"; // 여기에 이동할 URL을 입력하세요.
 });
 
 // Initialize modal and dialog to hidden initially

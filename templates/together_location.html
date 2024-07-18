@@ -7,6 +7,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
     <link rel="stylesheet" href="{% static 'css/location.css' %}"/>
+    <style>
+        /* 로딩 화면 스타일 */
+        #loading {
+            display: none;
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+            text-align: center;
+            padding-top: 20%;
+        }
+    </style>
 </head>
 <body>
     <h1>주소 입력하기</h1>
@@ -23,7 +38,13 @@
         <button type="submit">제출</button>
     </form>
 
+    <!-- 로딩 화면 -->
+    <div id="loading" class="hidden">
+        <h2>후보 탐색 중...</h2>
+    </div>    
+
     <script src="{% static 'js/location.js'%}"></script>
+    <script src="{% static 'js/loading.js'%}"></script>
 
 </body>
 </html>

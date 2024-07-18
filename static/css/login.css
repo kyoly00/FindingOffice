@@ -262,6 +262,9 @@
     border-bottom: 1px solid rgba(0, 0, 0, 0.4);
     text-align: center;
   }
+  .login-group select {
+    margin-top: 5px;
+  }
   .forgot-pass {
     margin-top: 15px;
     text-align: center;

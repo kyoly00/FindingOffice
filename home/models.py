@@ -2,6 +2,7 @@ from django.db import models
 class Customer(models.Model):
     cus_email = models.EmailField(primary_key=True)
     cus_password = models.CharField(max_length=255)
+    cus_password_length = models.PositiveIntegerField(default=0)  # 비밀번호 길이 저장
     cus_name = models.CharField(max_length=20)
     cus_gender = models.CharField(max_length=20)
     cus_company = models.CharField(max_length=20)
@@ -53,6 +54,7 @@ class ShareOffice(models.Model):
     so_wboard = models.BooleanField()
     so_wifi = models.BooleanField()
     so_bath_fclty = models.BooleanField()
+    so_url = models.CharField(max_length=200, default="https://map.naver.com/p/search/%EA%B3%B5%EC%9C%A0%EC%98%A4%ED%94%BC%EC%8A%A4?c=6.00,0,0,0,dh")
 
     def facilities(self):
         facilities_list = []

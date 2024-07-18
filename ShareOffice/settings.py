@@ -25,7 +25,7 @@ SECRET_KEY = "django-insecure-&eea3fc7#9564m+no!0n)8-qvm9)4h48y$j@ffs+9xv14&=d-b
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -144,3 +144,21 @@ LOGIN_REDIRECT_URL = 'home'
 
 NAVER_MAPS_CLIENT_ID = os.getenv('NAVER_MAPS_CLIENT_ID', 'w8mx4s9fio')
 NAVER_MAPS_CLIENT_SECRET = os.getenv('NAVER_MAPS_CLIENT_SECRET', 'qvbLEHUTP8q7p5FG4xcPTwRAMmC6ZErz3DC2OFEh')
+
+# Session 만료 시간
+SESSION_COOKIE_AGE = 3000
+
+# Session 쿠키 암호화
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTP_ONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+
+from django.contrib.messages import constants as messages
+
+MESSAGE_TAGS = {
+    messages.DEBUG: 'debug',
+    messages.INFO: 'info',
+    messages.SUCCESS: 'success',
+    messages.WARNING: 'warning',
+    messages.ERROR: 'error',
+}

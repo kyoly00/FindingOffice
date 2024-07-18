@@ -17,12 +17,14 @@ from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 
 import math
-from time import timezone
+from django.utils import timezone
 import re
+import requests
 
 import json
 import numpy as np
 from scipy.linalg import eig
+import concurrent.futures
 
 import os
 from dotenv import load_dotenv
@@ -38,7 +40,16 @@ def index(request):
     return ranking(request)
 
 def reservation(request):
-    return render(request, 'reservation.html')
+    cus_email = request.session.get('cus_email')
+    if not cus_email:
+        return redirect('login')  # 로그인되어 있지 않으면 로그인 페이지로 리디렉션
+
+    try:
+        customer = Customer.objects.get(cus_email=cus_email)
+    except Customer.DoesNotExist:
+        return redirect('login')  # 고객 정보가 없으면 로그인 페이지로 리디렉션
+
+    return render(request, 'reservation.html', {'customer': customer})
 
 def login(request):
     if request.method == 'POST':
@@ -67,8 +78,8 @@ def login(request):
     return render(request, 'login_register.html', {'form': form})
 
 def logout_view(request):
-    if 'customer_id' in request.session:
-        del request.session['customer_id']
+    if 'cus_email' in request.session:
+        del request.session['cus_email']
     return redirect('login')  # 로그아웃 후 로그인 페이지로 리디렉션
 
 def my_page(request):
@@ -108,11 +119,14 @@ def update_customer(request):
     return render(request, 'update_customer.html', {'form':form})
 
 def get_addresses_in_range(latitudes, longitudes):
+    latitudes = list(map(float, latitudes))
+    longitudes = list(map(float, longitudes))
+
     # 특정 범위 내의 데이터 조회
-    min_lat = min(map(float, latitudes))
-    max_lat = max(map(float, latitudes))
-    min_lng = min(map(float, longitudes))
-    max_lng = max(map(float, longitudes))
+    min_lat = min(latitudes)
+    max_lat = max(latitudes)
+    min_lng = min(longitudes)
+    max_lng = max(longitudes)
 
     # 데이터베이스에서 범위 내의 데이터를 가져옵니다.
     locations = ShareOffice.objects.filter(
@@ -121,6 +135,10 @@ def get_addresses_in_range(latitudes, longitudes):
         so_longitude__lte=max_lng,
         so_longitude__gte=min_lng
     )
+
+    # 공유오피스가 없을 경우 처리
+    if not locations.exists():
+        return None
 
     # 공유오피스의 id, 위도, 경도를 딕셔너리에 저장
     locations_dicts = [
@@ -132,7 +150,110 @@ def get_addresses_in_range(latitudes, longitudes):
         for location in locations
     ]
 
-    return locations_dicts
+    if len(locations_dicts) <= 30:
+        return locations_dicts
+
+    avg_lat, avg_lng = sum(latitudes) / len(latitudes), sum(longitudes) / len(longitudes)
+    around_range = [2, 4, 5, 10, 30, 50, 100]
+    offices = [] # 범위 내에 속하는 공유오피스 목록
+
+    for distance in around_range:
+        # 거리로부터 위도, 경도 범위 계산
+        lat_min = avg_lat - distance / 111.12
+        lat_max = avg_lat + distance / 111.12
+        lng_min = avg_lng - distance / (111.32 * math.cos(math.radians(avg_lat)))
+        lng_max = avg_lng + distance / (111.32 * math.cos(math.radians(avg_lat)))
+        
+        # 계산된 범위 내의 공유 오피스 찾기
+        # (실제 데이터베이스 검색 등의 로직 필요)
+        offices_in_range = [office for office in locations_dicts
+                           if lat_min <= office['so_lat'] <= lat_max
+                           and lng_min <= office['so_lng'] <= lng_max]
+        offices.extend(offices_in_range)
+        
+        # 공유 오피스 개수가 30개 이상이면 반환
+        if len(offices) >= 30:
+            return offices[:30]
+    
+    return offices
+
+# 무료 계정에서 Distance Matrix API의 한도는 100개 이므로 MAX_ELEMENTS_EXCEEDED 에러가 발생해 오류 야기해 사용X
+def calculate_travel_times(api_key, origins, destinations, mode='driving'):
+    endpoint = "https://maps.googleapis.com/maps/api/distancematrix/json"
+    travel_times = {}
+
+    # 분할 처리 - origins와 destinations를 분할하여 요청
+    max_elements = 100  # 최대 요소 수 (origin x destination)
+
+    origin_chunks = [origins[i:i + max_elements // len(destinations)] for i in range(0, len(origins), max_elements // len(destinations))]
+    destination_chunks = [destinations[i:i + max_elements // len(origins)] for i in range(0, len(destinations), max_elements // len(origins))]
+
+    for origin_chunk in origin_chunks:
+        for destination_chunk in destination_chunks:
+            params = {
+                'origins': '|'.join(origin_chunk),
+                'destinations': '|'.join(destination_chunk),
+                'mode': mode,
+                'key': api_key
+            }
+
+            response = requests.get(endpoint, params=params)
+
+            if response.status_code != 200:
+                print("Error:", response.status_code, response.text)
+                continue
+
+            result = response.json()
+
+            if result['status'] != 'OK':
+                print("Error:", result['status'], result.get('error_message', 'No additional error message'))
+                continue
+
+            for i, origin in enumerate(result['origin_addresses']):
+                for j, destination in enumerate(result['destination_addresses']):
+                    if result['rows'][i]['elements'][j]['status'] == 'OK':
+                        travel_times[(origin, destination)] = result['rows'][i]['elements'][j]['duration']['value']
+                    else:
+                        travel_times[(origin, destination)] = None
+
+    return travel_times
+
+# def finding_optimal(latitudes, longitudes, api_key=google_map_api_key):
+#     location_dicts = get_addresses_in_range(latitudes, longitudes)
+#     origins = [f"{lat},{lng}" for lat, lng in zip(latitudes, longitudes)]
+#     destinations = [f"{loc['so_lat']},{loc['so_lng']}" for loc in location_dicts]
+#
+#     travel_times = calculate_travel_times(api_key, origins, destinations, mode='driving')
+#
+#     # 목적지별 총 이동 시간을 계산
+#     total_travel_times = {loc['so_id']: 0 for loc in location_dicts}
+#
+#     for loc in location_dicts:
+#         destination = f"{loc['so_lat']},{loc['so_lng']}"
+#         for origin in origins:
+#             if (origin, destination) in travel_times and travel_times[(origin, destination)] is not None:
+#                 total_travel_times[loc['so_id']] += travel_times[(origin, destination)]
+#
+#     # 총 이동 시간이 작은 20개의 so_id를 반환
+#     sorted_so_ids = sorted(total_travel_times, key=total_travel_times.get)[:20]
+#
+#     # 이동 시간 차이를 계산하기 위한 딕셔너리 초기화
+#     travel_time_diffs = {so_id: 0 for so_id in sorted_so_ids}
+#
+#     # 각 지점의 이동 시간 차이를 계산
+#     for so_id in sorted_so_ids:
+#         destination = next(loc for loc in location_dicts if loc['so_id'] == so_id)
+#         times = [travel_times[(origin, f"{destination['so_lat']},{destination['so_lng']}")] for origin in origins if
+#                  (origin, f"{destination['so_lat']},{destination['so_lng']}") in travel_times]
+#         if len(times) > 1:
+#             travel_time_diffs[so_id] = max(times) - min(times)
+#         else:
+#             travel_time_diffs[so_id] = float('inf')  # 이동 시간이 하나인 경우 차이를 무한대로 설정
+#
+#     # 이동 시간 차이가 작은 순서대로 정렬
+#     sorted_final_so_ids = sorted(travel_time_diffs, key=travel_time_diffs.get)[:10]
+#
+#     return sorted_final_so_ids
 
 def finding_optimal(latitudes, longitudes):
     location_dicts = get_addresses_in_range(latitudes, longitudes)
@@ -182,26 +303,22 @@ def finding_optimal(latitudes, longitudes):
                 travel_time_seconds = time_info['travel_time_seconds']
                 total_travel_times[so_id] += travel_time_seconds
 
-        # 총 이동 시간이 작은 10개의 so_id를 반환
-        sorted_so_ids = sorted(total_travel_times, key=total_travel_times.get)[:10]
+    # 총 이동 시간이 작은 10개의 so_id를 반환
+    sorted_so_ids = sorted(total_travel_times, key=total_travel_times.get)[:10]
 
-        # 이동 시간 차이를 계산하기 위한 딕셔너리 초기화
-        travel_time_diffs = {so_id: 0 for so_id in sorted_so_ids}
+    # 이동 시간 차이를 계산하기 위한 딕셔너리 초기화
+    travel_time_diffs = {so_id: 0 for so_id in sorted_so_ids}
+    for so_id in sorted_so_ids:
+        times = [time_info['travel_time_seconds'] for i in travel_times for time_info in travel_times[i] if time_info['so_id'] == so_id]
+        if len(times) > 1:
+            travel_time_diffs[so_id] = max(times) - min(times)
+        else:
+            travel_time_diffs[so_id] = float('inf')
 
-        # 각 지점의 이동 시간 차이를 계산
-        for so_id in sorted_so_ids:
-            times = [time_info['travel_time_seconds'] for i in travel_times for time_info in travel_times[i] if
-                     time_info['so_id'] == so_id]
-            if len(times) > 1:
-                travel_time_diffs[so_id] = max(times) - min(times)
-            else:
-                travel_time_diffs[so_id] = float('inf')  # 이동 시간이 하나인 경우 차이를 무한대로 설정
+    # 이동 시간 차이가 작은 순서대로 정렬
+    sorted_final_so_ids = sorted(travel_time_diffs, key=travel_time_diffs.get)[:10]
 
-        # 이동 시간 차이가 작은 순서대로 정렬
-        sorted_final_so_ids = sorted(travel_time_diffs, key=travel_time_diffs.get)[:10]
-
-        return sorted_final_so_ids
-
+    return sorted_final_so_ids
 
 def address_to_lat_lng(addresses, people_counts):
     all_latitude = []
@@ -288,7 +405,6 @@ def together_location(request):
                 addresses.append(address)
                 people_counts.append(int(people))
                 people_num += int(people)
-                print(address, people_num)
             else:
                 break
 
@@ -302,6 +418,11 @@ def together_location(request):
         else:
             optimal_shareoffices = []
 
+        # 공유오피스가 없을 경우 처리
+        if not optimal_shareoffices:
+            messages.warning(request, '주변에 공유오피스가 없습니다!')
+            return render(request, 'choose_func.html')
+        
         # 세션에 offices 저장
         request.session['offices_together'] = optimal_shareoffices
         request.session['all_people_num'] = people_num
@@ -323,15 +444,18 @@ def alone_location(request):
 
             latitude, longitude = address_to_lat_lng([address], 1)
 
-            optimal_shareoffices = finding_alone(latitude=latitude, longitude=longitude,
-                                                 finding_range=finding_range)
+            optimal_shareoffices = finding_alone(latitude=latitude, longitude=longitude, finding_range=finding_range)
+
+            # 공유오피스가 없을 경우 처리
+            if not optimal_shareoffices:
+                messages.warning(request, '주변에 공유오피스가 없습니다!')
+                return render(request, 'choose_func.html')
 
             # 세션에 offices 저장
             request.session['offices_location'] = optimal_shareoffices
 
             return redirect('choose')
     except Customer.DoesNotExist:
-        messages.error(request, 'Customer not found.')
         return redirect('choose_func')
     return render(request, 'alone_location.html')
 
@@ -342,7 +466,7 @@ def recommendation(request):
         request.session['selected_office_ids'] = selected_ids  # 선택한 오피스 ID를 세션에 저장
         selected_offices = ShareOffice.objects.filter(id=selected_ids)
 
-        selected_data = [(office.id, office.so_name, office.so_address) for office in selected_offices]
+        selected_data = [(office.id, office.so_name, office.so_address, office.so_price) for office in selected_offices]
 
         return render(request, 'enterinfo.html', {'selected_data': selected_data, 'form': ReservationForm()})
 
@@ -354,12 +478,11 @@ def enterinfo(request):
         messages.error(request, 'No office selected.')
         return redirect('recommendation')
 
-    selected_offices = ShareOffice.objects.filter(id=selected_office_ids)
-    selected_data = [(office.id, office.so_name, office.so_address) for office in selected_offices]
+    request.session['selected_office_ids'] = selected_office_ids  # 선택한 오피스 ID를 세션에 저장
+    selected_data = ShareOffice.objects.filter(id__in=selected_office_ids)
 
     if request.method == 'POST':
         form = ReservationForm(request.POST)
-        print(f"POST data: {request.POST}")  # 디버깅용 출력
         if form.is_valid():
             selected_office_id = request.POST.get('office_ids')
             try:
@@ -379,19 +502,33 @@ def enterinfo(request):
             reservation = form.save(commit=False)
             reservation.so_id = selected_office
             reservation.cus_email = customer  # ForeignKey로 연결된 Customer 객체 저장
-            reservation.re_people_num = request.session.get('all_people_num')
+            if request.session.get('all_people_num'): reservation.re_people_num = request.session.get('all_people_num')
+            else: reservation.re_people_num = 1
             reservation.save()
 
-            messages.success(request, '예약이 완료되었습니다.')  # 예약 성공 메시지 추가
             return redirect('choose_func')  # 예약 완료 후 리디렉션
-        else:
-            print(form.errors)
-            messages.error(request, '유효하지 않은 입력입니다.')
 
     else:
-        form = ReservationForm(initial={'office_ids': selected_office_ids})
+        form = ReservationForm(initial={'office_ids': selected_office_ids, 'selected_data': selected_data})
 
-    return render(request, 'enterinfo.html', {'form': form, 'selected_data': selected_data})
+    # selected_data의 URL 값을 템플릿으로 전달
+    office_urls = [office.so_url for office in selected_data]
+
+    return render(request, 'enterinfo.html', {'form': form, 'office_urls': office_urls})
+
+def clear_session(request):
+    if 'offices_together' in request.session:
+        del request.session['offices_together']
+    if 'all_people_num' in request.session:
+        del request.session['all_people_num']
+    if 'offices_location' in request.session:
+        del request.session['offices_location']
+    if 'selected_office_ids' in request.session:
+        del request.session['selected_office_ids']
+    if 'offices_alone' in request.session:
+        del request.session['offices_alone']
+    if 'selected_facilities' in request.session:
+        del request.session['selected_facilities']
 
 def reservation_list(request):
     cus_email = request.session.get('cus_email')
@@ -406,13 +543,24 @@ def reservation_list(request):
 
 def sign_up(request):
     if request.method == 'POST':
-        cus_password = make_password(request.POST.get('cus_password'))
+        cus_password = request.POST.get('cus_password')
+        hashed_password = make_password(cus_password)
         cus_name = request.POST.get('cus_name')
         cus_gender = request.POST.get('cus_gender')
         cus_email = request.POST.get('cus_email')
         cus_company = request.POST.get('cus_company')
         cus_phone = request.POST.get('cus_phone')
+        try:
+            cus_phone = int(cus_phone.replace('-', ''))
+        except ValueError:
+            messages.error(request, '올바른 전화번호 형식이 아닙니다.')
+            return render(request, 'login_register.html')
         cus_address = request.POST.get('cus_address')
+
+        # 이메일 중복 확인
+        if Customer.objects.filter(cus_email=cus_email).exists():
+            messages.error(request, '이미 사용 중인 이메일입니다.')
+            return render(request, 'login_register.html')
 
         address = [cus_address]
         latitude, longitude = address_to_lat_lng(address, 1)
@@ -421,6 +569,7 @@ def sign_up(request):
         # 새로운 Customer 인스턴스 생성 및 저장
         customer = Customer(
             cus_password=cus_password,
+            cus_password_length=len(cus_password), 
             cus_name=cus_name,
             cus_gender=cus_gender,
             cus_email=cus_email,
@@ -466,20 +615,23 @@ def finding_alone(latitude, longitude, finding_range):
     longitude = float(longitude)
     latitude_change = finding_range / 111.0
     longitude_change = finding_range / (111.0 * math.cos(math.radians(latitude)))
-
+    
     latitudes.append(latitude + latitude_change)
     latitudes.append(latitude - latitude_change)
     longitudes.append(longitude + longitude_change)
     longitudes.append(longitude - longitude_change)
 
-    print('latitudes: ', latitudes, 'longitudes: ', longitudes)
-    location_dicts = get_addresses_in_range(latitudes, longitudes)
+    optimal_shareoffices = get_addresses_in_range(latitudes, longitudes)
+    
+    # 공유오피스가 없을 경우 처리
+    if not optimal_shareoffices:
+        return 
 
     # 이동 시간을 저장할 딕셔너리 초기화
-    travel_times = {i: [] for i in range(1, len(location_dicts) + 1)}
+    travel_times = {i: [] for i in range(1, len(optimal_shareoffices) + 1)}
 
     # 각 위치 쌍에 대해 Google Maps Directions API를 호출하여 이동 시간 계산
-    for j, loc in enumerate(location_dicts):
+    for j, loc in enumerate(optimal_shareoffices):
         so_lat = loc['so_lat']
         so_lng = loc['so_lng']
 
@@ -511,7 +663,7 @@ def finding_alone(latitude, longitude, finding_range):
             print("Response:", response_json)  # 응답 출력
 
     # 목적지별 총 이동 시간을 계산
-    total_travel_times = {loc['so_id']: 0 for loc in location_dicts}
+    total_travel_times = {loc['so_id']: 0 for loc in optimal_shareoffices}
 
     for i in travel_times:
         for time_info in travel_times[i]:
@@ -519,13 +671,17 @@ def finding_alone(latitude, longitude, finding_range):
             travel_time_seconds = time_info['travel_time_seconds']
             total_travel_times[so_id] += travel_time_seconds
 
-    # 총 이동 시간이 작은 10개의 so_id를 반환
-    sorted_so_ids = sorted(total_travel_times, key=total_travel_times.get)[:10]
+    if len(total_travel_times) >= 10:
+        # 총 이동 시간이 작은 10개의 so_id를 반환
+        sorted_so_ids = sorted(total_travel_times, key=total_travel_times.get)[:10]
+    else: sorted_so_ids = sorted(total_travel_times, key=total_travel_times.get)
+
     return sorted_so_ids
 
 def choose_func(request):
     if request.method == 'POST':
         finding_option = request.POST.get('finding_option')
+        clear_session(request)
         if finding_option == 'near_finding':
             try:
                 cus_email = request.session.get('cus_email')
@@ -536,14 +692,17 @@ def choose_func(request):
                 finding_range = 5
 
                 optimal_shareoffices = finding_alone(latitude=cus_latitude, longitude=cus_longitude, finding_range=finding_range)
-                print(optimal_shareoffices)
+
+                # 공유오피스가 없을 경우 처리
+                if not optimal_shareoffices:
+                    messages.warning(request, '주변에 공유오피스가 없습니다!')
+                    return render(request, 'choose_func.html')
 
                 # 세션에 offices_alone 저장
                 request.session['offices_alone'] = optimal_shareoffices
 
                 return redirect('choose')
             except Customer.DoesNotExist:
-                messages.error(request, 'Customer not found.')
                 return redirect('choose_func')
 
         elif finding_option == 'together_finding':
@@ -560,9 +719,9 @@ def choose(request):
         return render(request, 'choose.html')
     elif request.method == 'POST':
         selected_facilities = request.POST.getlist('facilities')
-        request.session['selected_facilities'] = selected_facilities
+        request.session['selected_facilities'] = selected_facilities # 세션에 저장
         num_facilities = len(selected_facilities)
-        rank_options = list(range(1, num_facilities + 1))        # 세션에 저장
+        rank_options = list(range(1, num_facilities + 1))        
         return render(request, 'enter_weights.html', {
             'selected_facilities': selected_facilities,
         'rank_options': rank_options})
@@ -619,7 +778,6 @@ def recommend_offices(request, selected_facilities, weights):
 def calculate_weights(request):
     if request.method == 'POST':
         selected_facilities = request.POST['selected_facilities'].split(',')
-        num_facilities = len(selected_facilities)
 
         # 순위 수집 및 정렬
         ranks = []
@@ -694,4 +852,4 @@ def delete_customer(request):
         messages.success(request, '회원 탈퇴가 완료되었습니다.')
         return redirect('login')  # 회원 탈퇴 후 메인 페이지로 리디렉션
 
-    return render(request, 'cus_delete_confirm.html')
+    return render(request, 'cus_delete_confirm.html')    

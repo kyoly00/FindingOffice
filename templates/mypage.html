@@ -1,4 +1,5 @@
 {% extends "mypage_base.html" %}
+{% load custom_filters %}
 
 {% block contents %}
 <div class="col-8 col-12-medium imp-medium">
@@ -12,7 +13,7 @@
                 </div>
                 <div class="form-group">
                     <label for="password">비밀번호</label>
-                    <p id="password">{{customer.cus_password}}</p>
+                    <p id="password">{{ customer.cus_password_length|mask_password }}</p>
                 </div>
                 <div class="form-group">
                     <label for="name">이름</label>
