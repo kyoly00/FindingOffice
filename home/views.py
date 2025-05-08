@@ -5,7 +5,6 @@ from django.contrib.auth.hashers import make_password, check_password
 from .models import Customer, Reservation, ShareOffice
 from django.db.models import Count
 from django.contrib.auth import authenticate, login as auth_login
-from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseBadRequest, HttpRequest
 from .forms import ReservationForm
 
@@ -14,17 +13,18 @@ from urllib.request import urlopen, Request as URLRequest
 from urllib.parse import urlencode
 from urllib.error import HTTPError
 from django.http import HttpResponse
-from django.contrib.auth.decorators import login_required
 
 import math
 from django.utils import timezone
 import re
 import requests
 
+import osmnx as ox
+import networkx as nx
+from shapely.geometry import Point, MultiPoint
 import json
 import numpy as np
-from scipy.linalg import eig
-import concurrent.futures
+import pandas as pd
 
 import os
 from dotenv import load_dotenv
@@ -34,6 +34,8 @@ load_dotenv()
 Client_ID = os.getenv('CLIENT_ID')
 Client_KEY = os.getenv('CLIENT_KEY')
 google_map_api_key = os.getenv('GOOGLE_MAP_API_KEY')
+GRAPH_PATH = r"C:\Users\Kyohyun\PycharmProjects\FindingOffice_osmnx_method\osm_graphs\korea_drive.graphml"
+G = ox.load_graphml(GRAPH_PATH)  
 
 # Create your views here.
 def index(request):
@@ -218,43 +220,6 @@ def calculate_travel_times(api_key, origins, destinations, mode='driving'):
 
     return travel_times
 
-# def finding_optimal(latitudes, longitudes, api_key=google_map_api_key):
-#     location_dicts = get_addresses_in_range(latitudes, longitudes)
-#     origins = [f"{lat},{lng}" for lat, lng in zip(latitudes, longitudes)]
-#     destinations = [f"{loc['so_lat']},{loc['so_lng']}" for loc in location_dicts]
-#
-#     travel_times = calculate_travel_times(api_key, origins, destinations, mode='driving')
-#
-#     # 목적지별 총 이동 시간을 계산
-#     total_travel_times = {loc['so_id']: 0 for loc in location_dicts}
-#
-#     for loc in location_dicts:
-#         destination = f"{loc['so_lat']},{loc['so_lng']}"
-#         for origin in origins:
-#             if (origin, destination) in travel_times and travel_times[(origin, destination)] is not None:
-#                 total_travel_times[loc['so_id']] += travel_times[(origin, destination)]
-#
-#     # 총 이동 시간이 작은 20개의 so_id를 반환
-#     sorted_so_ids = sorted(total_travel_times, key=total_travel_times.get)[:20]
-#
-#     # 이동 시간 차이를 계산하기 위한 딕셔너리 초기화
-#     travel_time_diffs = {so_id: 0 for so_id in sorted_so_ids}
-#
-#     # 각 지점의 이동 시간 차이를 계산
-#     for so_id in sorted_so_ids:
-#         destination = next(loc for loc in location_dicts if loc['so_id'] == so_id)
-#         times = [travel_times[(origin, f"{destination['so_lat']},{destination['so_lng']}")] for origin in origins if
-#                  (origin, f"{destination['so_lat']},{destination['so_lng']}") in travel_times]
-#         if len(times) > 1:
-#             travel_time_diffs[so_id] = max(times) - min(times)
-#         else:
-#             travel_time_diffs[so_id] = float('inf')  # 이동 시간이 하나인 경우 차이를 무한대로 설정
-#
-#     # 이동 시간 차이가 작은 순서대로 정렬
-#     sorted_final_so_ids = sorted(travel_time_diffs, key=travel_time_diffs.get)[:10]
-#
-#     return sorted_final_so_ids
-
 def finding_optimal(latitudes, longitudes):
     location_dicts = get_addresses_in_range(latitudes, longitudes)
 
@@ -319,6 +284,41 @@ def finding_optimal(latitudes, longitudes):
     sorted_final_so_ids = sorted(travel_time_diffs, key=travel_time_diffs.get)[:10]
 
     return sorted_final_so_ids
+
+# views.py 빈 공간에 추가
+
+def find_optimal_osmnx(latitudes, longitudes, G=G, top_n=10, radius_km=5, num_circle_pts=36):
+    # 3.1) 공유 오피스 목록 (위경도 가져오기)
+    latitudes = np.array(latitudes, dtype=float)
+    longitudes = np.array(longitudes, dtype=float)
+
+    location_dicts = get_addresses_in_range(latitudes, longitudes)
+
+    # 3.2) 출발지에서 가장 가까운 노드 찾기
+    start_nodes = [ox.distance.nearest_nodes(G, lat, lon) for lat, lon in zip(latitudes, longitudes)]
+    
+    # 3.3) 공유 오피스 위치에서 가장 가까운 노드 찾기
+    office_nodes = []
+    for office in location_dicts:
+        so_lat, so_lng = office['so_lat'], office['so_lng']
+        office_node = ox.distance.nearest_nodes(G, so_lat, so_lng)
+        office_nodes.append(office_node)
+
+    # 4) 각 공유 오피스에 대해 출발지와의 최단 경로 길이 계산 (Dijkstra)
+    results = []
+    for i, office_node in enumerate(office_nodes):
+        total_distance = 0
+        for start_node in start_nodes:
+            try:
+                distance = nx.dijkstra_path_length(G, source=start_node, target=office_node, weight='length')
+            except nx.NetworkXNoPath:
+                distance = float('inf')
+            total_distance += distance
+        results.append((location_dicts[i]['so_id'], location_dicts[i]['so_lat'], location_dicts[i]['so_lng'], total_distance))
+
+    # 5) 총 이동 거리가 적은 순으로 정렬 후 최적의 오피스 반환
+    results.sort(key=lambda x: x[3])
+    return [r[0] for r in results[:top_n]]  # 상위 10개 오피스 반환
 
 def address_to_lat_lng(addresses, people_counts):
     all_latitude = []
@@ -412,22 +412,20 @@ def together_location(request):
 
         all_latitude, all_longitude = address_to_lat_lng(addresses, people_counts)
 
-        # 데이터가 비어 있지 않을 때만 최적 위치를 찾기
-        if all_latitude and all_longitude:
-            optimal_shareoffices = finding_optimal(all_latitude, all_longitude)
-        else:
-            optimal_shareoffices = []
+        if not all_latitude:
+            messages.warning(request, '위치를 찾을 수 없습니다.')
+            return render(request, 'choose_func.html')
 
-        # 공유오피스가 없을 경우 처리
-        if not optimal_shareoffices:
+        # ← 여기만 교체
+        # google API 대신 osmnx 기반으로 최적 사무실 찾기
+        optimal_ids = find_optimal_osmnx(all_latitude, all_longitude, top_n=20)
+
+        if not optimal_ids:
             messages.warning(request, '주변에 공유오피스가 없습니다!')
             return render(request, 'choose_func.html')
-        
-        # 세션에 offices 저장
-        request.session['offices_together'] = optimal_shareoffices
-        request.session['all_people_num'] = people_num
 
-        # recommend_offices 함수로 리디렉션
+        request.session['offices_together'] = optimal_ids
+        request.session['all_people_num']   = people_num
         return redirect('choose')
 
     return render(request, 'together_location.html')

@@ -1,0 +1,36 @@
+/* 세 번째 CSS 파일 수정 */
+body {
+    background-color: #f9f9f9; /* 수정: 밝은 배경색 변경 */
+    color: #333; /* 수정: 텍스트 색상 변경 */
+    font-family: Arial, sans-serif; /* 수정: 기본 폰트 설정 */
+}
+
+#reservationForm {
+    max-width: 750px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 20px;
+}
+
+.address-group {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+}
+
+.address-group input {
+    width: calc(50% - 5px);
+    padding: 10px;
+    border: none;
+    border-radius: 5px;
+    background-color: #f2f2f2;
+    color: #333;
+}
