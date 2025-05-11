@@ -19,6 +19,7 @@ from django.utils import timezone
 import re
 import requests
 
+from django.conf import settings
 import osmnx as ox
 import networkx as nx
 from shapely.geometry import Point, MultiPoint
@@ -34,7 +35,8 @@ load_dotenv()
 Client_ID = os.getenv('CLIENT_ID')
 Client_KEY = os.getenv('CLIENT_KEY')
 google_map_api_key = os.getenv('GOOGLE_MAP_API_KEY')
-GRAPH_PATH = r"C:\Users\Kyohyun\PycharmProjects\FindingOffice_osmnx_method\osm_graphs\korea_drive.graphml"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GRAPH_PATH = os.path.join(settings.BASE_DIR, 'static', 'data', 'korea_drive.graphml')
 G = ox.load_graphml(GRAPH_PATH)  
 
 # Create your views here.

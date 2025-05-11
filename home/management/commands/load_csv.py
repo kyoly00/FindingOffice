@@ -1,12 +1,16 @@
 import csv
 from home.models import ShareOffice
 from django.core.management.base import BaseCommand
+import os
+from django.conf import settings
+
 
 class Command(BaseCommand):
     help = 'Load a csv file into the ShareOffice database'
 
     def handle(self, *args, **kwargs):
-        csv_file_path = "SharedOffice_data.csv"
+        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        csv_file_path = os.path.join(settings.BASE_DIR, 'static', 'data', 'SharedOffice_data.csv')
 
         # 'Y' 또는 'N'을 1 또는 0으로 변환하는 함수
         def y_n_to_int(value):
